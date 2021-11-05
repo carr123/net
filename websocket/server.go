@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"github.com/lucas-clemente/quic-go/http3"
 )
 
 func newServerConn(rwc io.ReadWriteCloser, buf *bufio.ReadWriter, req *http.Request, config *Config, handshake func(*Config, *http.Request) error) (conn *Conn, err error) {
@@ -71,10 +72,25 @@ func (s Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (s Server) serveWebSocket(w http.ResponseWriter, req *http.Request) {
-	rwc, buf, err := w.(http.Hijacker).Hijack()
-	if err != nil {
-		panic("Hijack failed: " + err.Error())
-	}
+	var rwc io.ReadWriteCloser
+	var buf *bufio.ReadWriter
+	var err error
+
+	if hj, ok := w.(http.Hijacker); ok {
+		rwc, buf, err = hj.Hijack()
+		if err != nil {
+			panic("Hijack failed: " + err.Error())
+		}
+	} else if stm, ok := w.(http3.DataStreamer); ok {
+		sm := stm.DataStream()
+		reader := bufio.NewReader(sm)
+		writer := bufio.NewWriter(sm)
+		buf = bufio.NewReadWriter(reader, writer)
+		rwc = sm
+	} else {
+		panic("can not Hijack")
+	}	
+	
 	// The server should abort the WebSocket connection if it finds
 	// the client did not send a handshake that matches with protocol
 	// specification.
